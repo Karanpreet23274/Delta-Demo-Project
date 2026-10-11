@@ -10,6 +10,9 @@ langgraph==0.2.60
 langchain-core==0.3.28
 langchain-anthropic==0.3.1
 langchain-ollama==0.2.2
+langchain-google-genai==2.0.7
+google-api-core==2.24.0   # newer releases need protobuf>=5.29, which OR-Tools 9.11 rejects
+protobuf==5.26.1          # OR-Tools 9.11 needs protobuf<5.27
 streamlit==1.41.1
 httpx==0.28.1
 plotly==5.24.1

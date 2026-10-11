@@ -1,6 +1,6 @@
 """The only module that talks to a language model. Two uses: parse a request, word verified evidence.
 
-Provider is chosen by LLM_PROVIDER / LLM_MODEL. MOCK_LLM=true (or any model failure) falls back to the
+Provider is chosen by LLM_PROVIDER (anthropic | gemini | ollama) and LLM_MODEL. MOCK_LLM=true (or any model failure) falls back to the
 rule parser and the templates, so plans keep working without a model.
 """
 import json
@@ -25,9 +25,27 @@ WRITER_PROMPT = (
 )
 
 
+DEFAULT_MODEL = {"anthropic": "claude-sonnet-5-5", "gemini": "gemini-3.8-flash", "ollama": "qwen2.5:7b-instruct"}
+
+
+def _provider() -> str:
+    p = env("LLM_PROVIDER", "anthropic").lower()
+    return "gemini" if p in ("google", "gemini") else p
+
+
+def _model() -> str:
+    return env("LLM_MODEL") or DEFAULT_MODEL.get(_provider(), "")
+
+
 def _client():
-    provider = env("LLM_PROVIDER", "anthropic").lower()
-    model = env("LLM_MODEL", "claude-sonnet-5-5")
+    provider, model = _provider(), _model()
+    if provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        key = env("GEMINI_API_KEY") or env("GOOGLE_API_KEY")
+        if not key:
+            raise ValueError("GEMINI_API_KEY is not set in .env")
+        return ChatGoogleGenerativeAI(model=model, temperature=0, max_output_tokens=1200, google_api_key=key,
+                                      timeout=60, max_retries=1)
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
         return ChatAnthropic(model=model, temperature=0, max_tokens=1200, timeout=60)
@@ -38,7 +56,7 @@ def _client():
 
 
 def model_name() -> str:
-    return "mock (rules and templates)" if mock_llm() else f"{env('LLM_PROVIDER', 'anthropic')}:{env('LLM_MODEL', 'claude-sonnet-5-5')}"
+    return "mock (rules and templates)" if mock_llm() else f"{_provider()}:{_model()}"
 
 
 def health() -> dict:
@@ -99,7 +117,11 @@ def narrate(task: str, evidence: dict, bad: list[str] | None = None) -> tuple[st
     if bad:
         msg += f"\nYour previous answer used figures not in the evidence: {', '.join(bad)}. Remove or correct them."
     try:
-        out = _client().invoke([("system", WRITER_PROMPT), ("human", msg)])
+        client = _client()
+    except Exception as e:  # noqa: BLE001 - not configured (e.g. no key): no call was made, so none is counted
+        return None, {"llm_calls": 0, "tokens": 0, "error": type(e).__name__}
+    try:
+        out = client.invoke([("system", WRITER_PROMPT), ("human", msg)])
         content = out.content if isinstance(out.content, str) else "".join(
             p.get("text", "") for p in out.content if isinstance(p, dict))
         return content.strip(), {"llm_calls": 1, "tokens": _tokens(out)}

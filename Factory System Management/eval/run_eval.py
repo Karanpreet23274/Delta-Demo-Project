@@ -115,6 +115,7 @@ def main() -> int:
     client = TestClient(app)
     results, current = {}, "unset"
     lat, calls, tokens = [], [], []
+    sources = {"router": {}, "writer": {}}  # how often each LLM node really used the model
     for case in cases:
         if "check_numbers" in case:
             cn = case["check_numbers"]
@@ -139,6 +140,10 @@ def main() -> int:
             tr = client.get(f"/trace/{r['run_id']}").json()
             calls.append(tr["llm_calls"])
             tokens.append(tr["tokens"])
+            for st in tr["steps"]:
+                if st["agent"] in sources and st["tool"] in ("parse_intent", "narrate"):
+                    src = (st.get("output") or {}).get("source", "?")
+                    sources[st["agent"]][src] = sources[st["agent"]].get(src, 0) + 1
         lat.append(ms)
         results[case["id"]] = {"case": case, "pass": not fails, "fails": fails, "ms": ms, "resp": r}
         print(f"{'PASS' if not fails else 'FAIL'} {case['id']:34} {r.get('answer_type', '?'):22} {ms:7.0f} ms  {'; '.join(fails)}")
@@ -188,6 +193,8 @@ def main() -> int:
            f"| Brief faithfulness | {faithful} / {len(briefs)} briefs pass the number check |",
            f"| Latency p50 / p95 | {statistics.median(lat):.0f} ms / {p95:.0f} ms |",
            f"| LLM calls per request (mean) | {statistics.mean(calls):.2f} |",
+           "| Router: model vs fallback | " + ", ".join(f"{k} {v}" for k, v in sorted(sources["router"].items())) + " |",
+           "| Writer: model vs template | " + ", ".join(f"{k} {v}" for k, v in sorted(sources["writer"].items())) + " |",
            f"| Tokens per request (mean) | {statistics.mean(tokens):.0f} |",
            "\n## Configuration comparison: solver backend (70/30, never late)\n",
            "| Backend | Status | Total cost | Carbon t | Valid | Solve ms |", "|---|---|---|---|---|---|"]
