@@ -36,9 +36,13 @@ def main(argv=None) -> int:
 
     explicit_start = bool(a.planning_start)
     card_path = Path(a.data_card) if a.data_card else folder / "data_card.json"
+    set_setting("data_card_row_counts", None)  # counts from an earlier load described other files
+    card_tables: set[str] = set()
     if card_path.exists():
         try:
-            applied = apply_data_card(json.loads(card_path.read_text(encoding="utf-8")))
+            card = json.loads(card_path.read_text(encoding="utf-8"))
+            applied = apply_data_card(card)
+            card_tables = set((card.get("row_counts") or {}).keys())
             explicit_start = explicit_start or any(x.startswith("planning_start") for x in applied)
             out(f"data card {card_path.name}: {'; '.join(applied) or 'no planning_start or row_counts'}")
         except (ValueError, json.JSONDecodeError) as e:
@@ -54,7 +58,8 @@ def main(argv=None) -> int:
             out(f"{table:17} not found (skipped)")
             continue
         try:
-            r = ingest_bytes(path.read_bytes(), table, infer_start=not explicit_start)
+            r = ingest_bytes(path.read_bytes(), table, infer_start=not explicit_start,
+                             described_by_card=table in card_tables)
         except (LoadError, FileRejected) as e:
             out(f"{table:17} REJECTED  {e}")
             failed = True

@@ -85,3 +85,21 @@ def test_loads_pack_from_teammate_generator(tmp_path):
     assert all(c["passed"] for c in checks), checks          # all six run and pass, row counts included
     r = run_plan(make_ctx(), {"cost": 0.7, "carbon": 0.3}, "never_late")
     assert r["validator"]["valid"]
+
+
+def test_row_counts_are_never_fixed(tmp_path):
+    """A file of any size must not fail check 6 because of a data card that described a different file."""
+    from app.data.load import main as load
+    from app.data.store import ingest_bytes, run_checks
+
+    sample = Path(__file__).resolve().parents[1] / "data" / "sample"
+    assert load(["--dir", str(sample)]) == 0                       # sample + its card: 150 orders expected
+    assert run_checks()[-1]["passed"] is True
+    orders = (sample / "orders.csv").read_text(encoding="utf-8").splitlines()
+    ingest_bytes(("\n".join(orders[:121]) + "\n").encode(), "orders")   # 120 orders, no card
+    c6 = run_checks()[-1]
+    assert c6["passed"] is not False and "orders" not in c6["detail"]  # orders no longer compared with 150
+    ingest_bytes(("\n".join(orders[:121]) + "\n").encode(), "orders", described_by_card=True)
+    (tmp_path / "orders.csv").write_text("\n".join(orders[:61]) + "\n", encoding="utf-8")
+    assert load(["--dir", str(tmp_path)]) == 0                     # folder without a card: old counts cleared
+    assert run_checks()[-1]["passed"] is None

@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 
-from app.config import db_path, planning_start, set_setting
+from app.config import db_path, get_setting, planning_start, set_setting
 from app.data.loader import TABLES, load_csv
 from app.data.validate import OPTIONAL, SCHEMA, cross_checks, validate_table
 
@@ -101,13 +101,18 @@ def infer_planning_start(df: pd.DataFrame) -> tuple[date | None, str | None]:
                  f"{min(dues)}). Pass planning_start or a data card to set it yourself.")
 
 
-def ingest_bytes(content: bytes, table: str, filename: str | None = None, infer_start: bool = True) -> dict:
+def ingest_bytes(content: bytes, table: str, filename: str | None = None, infer_start: bool = True,
+                 described_by_card: bool = False) -> dict:
     """Load, validate and store one CSV. Shared by POST /ingest and the CLI loader.
 
     Raises LoadError / FileRejected when nothing in the file is usable. infer_start=False when the caller set
-    the planning start explicitly for this load.
+    the planning start explicitly for this load. described_by_card=True when a data card loaded with this file
+    states its row count; otherwise any earlier expected count for the table is dropped, because it described a
+    different file (row counts are never fixed: each file may have any number of rows).
     """
     df = load_csv(content, table)
+    if not described_by_card:
+        forget_card_count(table)
     first_notes = []
     if table == "orders" and infer_start:
         new_start, note = infer_planning_start(df)
@@ -140,6 +145,14 @@ def run_checks() -> list[dict]:
     """The six data checks over the stored tables; row counts compare whole files (loaded + rejected)."""
     files = {t: d["rows_loaded"] + d["rows_rejected"] for t, d in datasets().items()}
     return cross_checks(read_all(), files)
+
+
+def forget_card_count(table: str) -> None:
+    stored = get_setting("data_card_row_counts")
+    if stored:
+        counts = json.loads(stored)
+        if counts.pop(table, None) is not None:
+            set_setting("data_card_row_counts", json.dumps(counts) if counts else None)
 
 
 def apply_data_card(card: dict) -> list[str]:

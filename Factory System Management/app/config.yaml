@@ -22,8 +22,3 @@ units:
   capacity: units per week
   carbon_intensity: kg CO2e per kWh
   currency: EUR
-data_card_row_counts:                # check 6: row counts must match the data card (null = not checked)
-  orders: null
-  plants: null
-  transport_duties: null
-  capacity_events: null

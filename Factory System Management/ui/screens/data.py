@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import streamlit as st
 from common import analyze, api_get, api_post, settings
@@ -32,6 +34,8 @@ for col, (table, noun) in zip(cols, TABLES.items(), strict=False):
             r = api_post("/ingest", files={"file": (f"{table}.csv", up.getvalue(), "text/csv")},
                          data={"meta": f'{{"table": "{table}"}}'})
             st.session_state[f"done_{table}"] = up.file_id
+            if r and r.get("notes"):
+                st.session_state["upload_notes"] = [f"{table}.csv: {n}" for n in r["notes"]]
             if r and r.get("status") == "rejected":
                 st.session_state["upload_error"] = f"**File rejected** — {r.get('error') or 'no valid rows'}"
             elif r and r.get("status") == "partial":
@@ -41,6 +45,9 @@ for col, (table, noun) in zip(cols, TABLES.items(), strict=False):
 
 if msg := st.session_state.pop("upload_error", None):
     (st.error if msg.startswith("**File rejected") else st.warning)(msg)
+for note in st.session_state.pop("upload_notes", []):
+    st.info(note)
+st.caption("Files can have any number of rows (up to the upload safety limit); nothing here assumes the sample's sizes.")
 
 left, right = st.columns(2)
 with left, st.container(border=True):
@@ -51,6 +58,19 @@ with left, st.container(border=True):
                 + (f" · {len(checks) - len(ran)} not checked" if len(ran) < len(checks) else ""))
     for c in checks:
         st.markdown(f"{ {True: '✅', False: '❌', None: '⚪'}[c['passed']] } {c['check']}" + (f"  \n  :gray[{c['detail']}]" if c["detail"] else ""))
+    card = st.file_uploader("Data card (optional) · data_card.json", type=["json"], key="up_card",
+                            help="Row counts are never fixed. Upload the data card that came with these files "
+                                 "to check their row counts (and set the planning start); without one, the "
+                                 "row-count check is shown as not checked.")
+    if card is not None and st.session_state.get("done_card") != card.file_id:
+        st.session_state["done_card"] = card.file_id
+        try:
+            r = api_post("/data_card", json=json.loads(card.getvalue()))
+        except json.JSONDecodeError:
+            r = {"_error": 422, "detail": "data_card.json is not valid JSON"}
+        if r and "_error" in r:
+            st.session_state["upload_error"] = f"**File rejected** — {r.get('detail')}"
+        st.rerun()
 with right, st.container(border=True):
     st.markdown("**Rejected rows**")
     rej = pd.DataFrame(status["rejects"])

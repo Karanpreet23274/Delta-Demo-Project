@@ -64,7 +64,8 @@ async def ingest(file: UploadFile = File(...), meta: str | None = Form(None), ta
         raise HTTPException(422, f"Bad planning_start or data_card: {e}") from e
     content = await file.read(cfg()["limits"]["max_upload_bytes"] + 1)
     try:
-        result = ingest_bytes(content, table, infer_start=not card.get("planning_start"))
+        result = ingest_bytes(content, table, infer_start=not card.get("planning_start"),
+                              described_by_card=table in (card.get("row_counts") or {}))
     except (LoadError, FileRejected) as e:
         return JSONResponse(status_code=422, content={"table": table, "rows_loaded": 0, "rows_rejected": None,
                                                       "status": "rejected", "error": str(e)})
@@ -72,6 +73,19 @@ async def ingest(file: UploadFile = File(...), meta: str | None = Form(None), ta
     result["data_card_applied"] = applied
     result["checks"] = run_checks()
     return result
+
+
+@app.post("/data_card")
+def data_card(card: dict, x_admin_token: str | None = Header(None)):
+    """Optional: a data card (data_card.json) for the loaded files; its row_counts drive check 6."""
+    token = env("ADMIN_TOKEN")
+    if token and x_admin_token != token:
+        raise HTTPException(401, "Missing or wrong X-Admin-Token")
+    try:
+        applied = apply_data_card(card)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(422, f"Bad data card: {e}") from e
+    return {"data_card_applied": applied, "planning_start": planning_start().isoformat(), "checks": run_checks()}
 
 
 @app.get("/data/status")

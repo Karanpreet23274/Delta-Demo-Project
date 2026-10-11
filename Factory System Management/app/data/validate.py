@@ -178,8 +178,7 @@ def cross_checks(t: dict[str, pd.DataFrame], file_rows: dict[str, int] | None = 
     add(f"Carbon intensity is in {unit['carbon_intensity']}", ci_ok)
 
     stored = get_setting("data_card_row_counts")
-    expected = json.loads(stored) if stored else {k: v for k, v in (cfg().get("data_card_row_counts") or {}).items()
-                                                  if v is not None}
+    expected = json.loads(stored) if stored else {}  # only from a data card loaded with the files; never fixed
     rows = file_rows or {k: len(v) for k, v in t.items()}
     compared = {k: v for k, v in expected.items() if k in rows}
     if not compared:
