@@ -335,13 +335,16 @@ def build_graph():
         g.add_node(name, fn)
     g.set_entry_point("router")
     g.add_edge("router", "guard")
-    g.add_conditional_edges("guard", route_after_guard)
+    # explicit path maps: the compiled graph then states exactly the routes in the design review (Figure 2)
+    g.add_conditional_edges("guard", route_after_guard,
+                            ["optimiser", "scenario", "explainer", "brief_data", "assemble"])
     for n in ("optimiser", "scenario", "explainer"):
-        g.add_conditional_edges(n, lambda s: "assemble" if s.get("answer_type") == "clarification_needed" else "checker")
+        g.add_conditional_edges(n, lambda s: "assemble" if s.get("answer_type") == "clarification_needed" else "checker",
+                                ["checker", "assemble"])
     g.add_edge("brief_data", "writer")
     g.add_edge("checker", "writer")
     g.add_edge("writer", "number_guard")
-    g.add_conditional_edges("number_guard", route_after_numbers)
+    g.add_conditional_edges("number_guard", route_after_numbers, ["writer", "assemble"])
     g.add_edge("assemble", END)
     return g.compile()
 
