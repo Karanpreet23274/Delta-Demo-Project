@@ -1,4 +1,5 @@
 import json
+import re
 
 import pandas as pd
 import streamlit as st
@@ -13,6 +14,45 @@ TABLES = {"orders": "rows loaded", "plants": "rows", "transport_duties": "lanes"
 status = api_get("/data/status") or {"datasets": {}, "rejects": [], "checks": []}
 
 st.subheader("Input files · POST /ingest")
+
+
+def _table_of(name: str) -> str:
+    """'orders (1).csv' -> 'orders': browsers add ' (n)' to repeated downloads."""
+    return re.sub(r"\s*\(\d+\)$", "", name.rsplit(".", 1)[0].strip().lower())
+
+
+pack = st.file_uploader("Upload all files at once: orders.csv, plants.csv, transport_duties.csv, capacity_events.csv "
+                        "and optionally data_card.json (each file goes to the table its name matches)",
+                        type=["csv", "json"], accept_multiple_files=True, key="up_all")
+if pack and st.session_state.get("done_all") != tuple(sorted(f.file_id for f in pack)):
+    st.session_state["done_all"] = tuple(sorted(f.file_id for f in pack))
+    by = {_table_of(f.name): f for f in pack}
+    card = {}
+    if "data_card" in by:
+        try:
+            card = json.loads(by["data_card"].getvalue())
+        except json.JSONDecodeError:
+            st.session_state["upload_error"] = "**File rejected** — data_card.json is not valid JSON"
+    notes, problems = [], []
+    for table in ("plants", "orders", "transport_duties", "capacity_events"):  # plants first: events check plants
+        if table not in by:
+            continue
+        meta = {"table": table, **({"data_card": card} if card else {})}
+        r = api_post("/ingest", files={"file": (f"{table}.csv", by[table].getvalue(), "text/csv")},
+                     data={"meta": json.dumps(meta)})
+        if not r:
+            continue
+        notes += [f"{table}.csv: {n}" for n in r.get("notes", [])]
+        if r.get("status") in ("rejected", "partial") or "_error" in r:
+            problems.append(f"{table}.csv: {r.get('error') or r.get('detail') or str(r['rows_rejected']) + ' rows rejected'}")
+    unknown = sorted(set(by) - {"plants", "orders", "transport_duties", "capacity_events", "data_card"})
+    if unknown:
+        problems.append("not loaded (name matches no table): " + ", ".join(f.name for k, f in by.items() if k in unknown))
+    st.session_state["upload_notes"] = notes
+    if problems:
+        st.session_state["upload_error"] = "**Partly loaded** — " + "; ".join(problems)
+    st.rerun()
+
 cols = st.columns(4)
 for col, (table, noun) in zip(cols, TABLES.items(), strict=False):
     with col, st.container(border=True):
@@ -58,6 +98,13 @@ with left, st.container(border=True):
                 + (f" · {len(checks) - len(ran)} not checked" if len(ran) < len(checks) else ""))
     for c in checks:
         st.markdown(f"{ {True: '✅', False: '❌', None: '⚪'}[c['passed']] } {c['check']}" + (f"  \n  :gray[{c['detail']}]" if c["detail"] else ""))
+    cross_failed = any(c["passed"] is False for c in checks[:2])  # product made somewhere / lane exists
+    loaded = {t: d["loaded_at"][:19] for t, d in status["datasets"].items() if t != "capacity_events"}
+    if cross_failed and len(set(t[:16] for t in loaded.values())) > 1:  # loaded in different minutes
+        st.warning("These files were loaded at different times ("
+                   + ", ".join(f"{t} {ts[11:16]}" for t, ts in sorted(loaded.items()))
+                   + "), so they may come from different packs. Upload the matching orders, plants and "
+                     "transport_duties together with **Upload all files at once**.")
     card = st.file_uploader("Data card (optional) · data_card.json", type=["json"], key="up_card",
                             help="Row counts are never fixed. Upload the data card that came with these files "
                                  "to check their row counts (and set the planning start); without one, the "
