@@ -5,7 +5,7 @@
 | Section | Check | Result | Detail |
 |---|---|---|---|
 | A Layers | UI imports no backend code (calls FastAPI only) | ✅ |  |
-| A Layers | Only the agent graph (and /health status) import the LLM module | ✅ | app\agent\graph.py, app\api\main.py |
+| A Layers | Only the agent graph (and /health status) import the LLM module | ✅ | app/agent/graph.py, app/api/main.py |
 | A Layers | LLM called only in router (parse) and writer (narrate) nodes | ✅ | {'router': {'parse_intent'}, 'writer': {'narrate'}} |
 | A Layers | Every request enters through FastAPI: /analyze runs the graph | ✅ |  |
 | B Graph | Compiled LangGraph edges equal the designed routes | ✅ | 19 edges |
@@ -34,13 +34,13 @@
 | D O-077 | Number guard checked the explanation | ✅ |  |
 | E Data drop | Event validation: unknown plant, dates in order, loss 0-100 % (3 of 4 rejected) | ✅ | Capacity loss must be between 0 and 100 percent; End date is before the start date; Unknown plant Z (event E-9) |
 | E Data drop | Re-plan uses the loaded event and runs apply_scenario → solve → validate → compare | ✅ | Capacity event E-2: Plant C loses 40% from 2026-10-19 to 2026-11-01 (pro rata by day) |
-| E Data drop | Re-plan is a separate run linked to its baseline | ✅ | al-cf5c70 ← parent al-ed9294 |
+| E Data drop | Re-plan is a separate run linked to its baseline | ✅ | al-08599d ← parent al-0d3f4b |
 | E Data drop | Baseline run left unchanged | ✅ |  |
 | E Data drop | Moved orders listed with a reason | ✅ | 9 moved, 91% unchanged |
 | F Guardrails | Fabricated figures caught; writer retried exactly once | ✅ | unmatched first try: ['9,999,999', '250,000'] |
 | F Guardrails | After the second failure the template (computed numbers) is returned | ✅ |  |
 | F Guardrails | LLM calls per request stay within 2 + 1 retry | ✅ | llm_calls=2 |
-| F Guardrails | Faithful LLM text passes first time (one writer call) | ✅ | The plan costs 1,659,698 and emits 179.4 t. |
+| F Guardrails | Faithful LLM text passes first time (one writer call) | ✅ | The plan costs 1,659,768 and emits 179.5 t. |
 | G Ingest | Unknown table name rejected | ✅ |  |
 | G Ingest | Oversized upload rejected (> 5 MB) | ✅ | 5,980,037 bytes |
 | G Ingest | Missing required column rejects the whole file | ✅ | orders.csv is missing the required column due. Nothing was loaded. |

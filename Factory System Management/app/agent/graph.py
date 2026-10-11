@@ -4,7 +4,7 @@ router -> guard -> {optimiser | scenario | explainer | brief_data} -> checker ->
 guard can short-circuit to assemble with answer_type refused or clarification_needed.
 """
 import time
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -12,6 +12,7 @@ from langgraph.graph import END, StateGraph
 from app.agent import llm, templates
 from app.agent.guard import check_numbers
 from app.agent.intent import Intent
+from app.data.store import read_table
 from app.tools.explain import explain_order
 from app.tools.kpis import compute_kpis
 from app.tools.planner import LIMITATIONS, assumptions, events_from_table, make_ctx, run_plan
@@ -58,14 +59,19 @@ def _step(s: State, agent: str, tool: str | None, inp=None, out=None, t0: float 
 def router(s: State) -> State:
     t0 = time.perf_counter()
     sc = s.get("scenario_json") or {}
-    if sc.get("type") in ("capacity_loss", "replan"):
+    kind = sc.get("type")
+    if not kind and (sc.get("plant") or sc.get("capacity_loss_pct") is not None):
+        kind = "capacity_loss"  # the guide's scenario example has no "type" key
+    elif not kind and sc.get("carbon_cut_pct") is not None:
+        kind = "carbon_cut"
+    if kind in ("capacity_loss", "replan"):
         loss = sc.get("capacity_loss_pct")
         if loss is not None and 0 < float(loss) < 1:  # Annex B "share of capacity lost": 0.3 means 30 %
             loss = round(float(loss) * 100, 6)
         intent = Intent(type="replan", plant=sc.get("plant"), capacity_loss_pct=loss,
                         from_date=sc.get("from_date"), to_date=sc.get("to_date"))
         meta = {"source": "scenario_json", "llm_calls": 0, "tokens": 0}
-    elif sc.get("type") in ("carbon_cut", "tradeoff"):
+    elif kind in ("carbon_cut", "tradeoff"):
         cut = sc.get("carbon_cut_pct")
         intent = Intent(type="tradeoff", carbon_cut_pct=cut, all_cuts=cut is None)
         meta = {"source": "scenario_json", "llm_calls": 0, "tokens": 0}
@@ -88,7 +94,19 @@ REFUSALS = {
                  "I can show the cheapest plan with late orders listed."),
     "invent_numbers": ("I can only report figures computed by the solver and calculator. "
                        "I can write the brief from the computed results instead."),
+    "single_plant": ("I can't put every order in one plant: one plant does not have the weekly capacity for "
+                     "all orders, and it may not make every product. I can show the cheapest plan that respects "
+                     "each plant's capacity and products instead."),
+    "prompt_injection": ("I can't ignore my rules or share my internal instructions. I can plan orders, run a "
+                         "what-if, explain an order or write a brief from the loaded data."),
+    "out_of_scope": ("That figure is not in the loaded data, and I don't forecast prices or other future values. "
+                     "I can only use the numbers in the data pack, for example the current plan's cost and carbon."),
 }
+
+
+def _events_loaded() -> bool:
+    ev = read_table("capacity_events")
+    return ev is not None and len(ev) > 0
 
 
 def guard(s: State) -> State:
@@ -106,7 +124,7 @@ def guard(s: State) -> State:
         g = {"decision": "clarification_needed",
              "question": "By how much should carbon fall compared with the current plan?",
              "options": ["5%", "10%", "15%", "20%", "Show all as a trade-off"]}
-    elif i.type == "replan" and not i.plant:
+    elif i.type == "replan" and not i.plant and not (i.use_loaded_events and _events_loaded()):
         g = {"decision": "clarification_needed", "question": "Which plant loses capacity, and by how much?",
              "options": ["Plant A", "Plant B", "Plant C", "Use capacity_events.csv"]}
     elif i.type == "explain" and not i.order_id:
@@ -182,12 +200,18 @@ def scenario(s: State) -> State:
     s["result"] = _baseline(s)
     if s["result"]["kpis"] is None:
         s["result"]["kpis"] = compute_kpis(s["result"]["plan"], base_ctx.caps)
-    if i.capacity_loss_pct is None:
+    if i.capacity_loss_pct is None or not i.plant:  # no plant named: every loaded event (the guard checked)
         events = events_from_table(base_ctx.tables, i.plant)
     else:
         table_ev = events_from_table(base_ctx.tables, i.plant)
-        f = i.from_date or (table_ev[0]["from_date"] if table_ev else base_ctx.start)
-        to = i.to_date or (table_ev[0]["to_date"] if table_ev else date.fromordinal(base_ctx.start.toordinal() + 7 * base_ctx.weeks - 1))
+        end = date.fromordinal(base_ctx.start.toordinal() + 7 * base_ctx.weeks - 1)
+        if (i.start_week or i.duration_weeks) and not (i.from_date or i.to_date):
+            # "down for two weeks" = weeks 1-2; "weeks 2-3" = from week 2 for two weeks
+            f = base_ctx.start + timedelta(days=7 * ((i.start_week or 1) - 1))
+            to = f + timedelta(days=7 * i.duration_weeks - 1) if i.duration_weeks else end
+        else:
+            f = i.from_date or (table_ev[0]["from_date"] if table_ev else base_ctx.start)
+            to = i.to_date or (table_ev[0]["to_date"] if table_ev else end)
         events = [{"event_id": "manual", "plant": i.plant, "from_date": f, "to_date": to,
                    "capacity_loss_pct": i.capacity_loss_pct}]
     if not events:

@@ -171,6 +171,10 @@ def cross_checks(t: dict[str, pd.DataFrame], file_rows: dict[str, int] | None = 
     due_ok = orders is not None and len(orders) and (orders["due"] > planning_start()).all()
     add("Due dates are after the planning start", due_ok)
     ci_ok = plants is not None and len(plants) and plants["carbon_kg_per_kwh"].between(0, MAX_CARBON_KG_PER_KWH).all()
+    if ci_ok:
+        weekly = [c for c in plants.columns if c.startswith("carbon_kg_per_kwh_week_")]
+        ci_ok = all(pd.to_numeric(plants[c], errors="coerce").dropna().between(0, MAX_CARBON_KG_PER_KWH).all()
+                    for c in weekly)
     add(f"Carbon intensity is in {unit['carbon_intensity']}", ci_ok)
 
     stored = get_setting("data_card_row_counts")

@@ -12,7 +12,9 @@ from app.config import env, mock_llm
 ROUTER_PROMPT = (
     "You turn a planner's request about allocating manufacturing orders to plants A, B and C into a "
     "typed intent. Do not answer the request. Do not invent values the user did not state; leave them null. "
-    "Order ids look like O-077 (\"order 77\" means O-077)."
+    "Order ids look like O-077 (\"order 77\" means O-077). A plant that is down, shut or offline loses 100% of "
+    "its capacity. 'For two weeks' means duration_weeks=2; 'weeks 2-3' means start_week=2 and duration_weeks=2. "
+    "Set use_loaded_events when the user refers to capacity events that were loaded."
 )
 WRITER_PROMPT = (
     "You write short, plain-English text for operations managers about a production plan. Use ONLY the "
@@ -54,6 +56,22 @@ def _tokens(msg) -> int:
     return int(u.get("total_tokens", 0))
 
 
+def backstop(intent: Intent, text: str) -> Intent:
+    """Guardrails that do not depend on the model: the rule parser can add a rule break or a missed detail,
+    never remove what the model found."""
+    r = rule_parse(text)
+    upd = {}
+    if r.rule_break and not intent.rule_break:
+        upd["rule_break"] = r.rule_break
+    if intent.type == "replan" and r.type == "replan":
+        if r.use_loaded_events and not intent.use_loaded_events:
+            upd["use_loaded_events"] = True
+        for k in ("start_week", "duration_weeks", "capacity_loss_pct"):
+            if getattr(intent, k) is None and getattr(r, k) is not None:
+                upd[k] = getattr(r, k)
+    return intent.model_copy(update=upd) if upd else intent
+
+
 def parse_intent(text: str) -> tuple[Intent, dict]:
     if mock_llm():
         return rule_parse(text), {"source": "rules", "llm_calls": 0, "tokens": 0}
@@ -66,7 +84,7 @@ def parse_intent(text: str) -> tuple[Intent, dict]:
             out = chain.invoke([("system", ROUTER_PROMPT), ("human", text)])
             tokens += _tokens(out.get("raw"))
             if out.get("parsed") is not None:
-                return out["parsed"], {"source": "llm", "llm_calls": calls, "tokens": tokens,
+                return backstop(out["parsed"], text), {"source": "llm", "llm_calls": calls, "tokens": tokens,
                                        "ms": round((time.perf_counter() - t0) * 1000)}
         except Exception:  # noqa: BLE001 - provider errors fall back to rules
             pass

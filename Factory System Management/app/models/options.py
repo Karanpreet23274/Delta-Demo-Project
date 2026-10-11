@@ -16,6 +16,7 @@ from datetime import date, timedelta
 import pandas as pd
 
 from app.config import cfg
+from app.data.validate import MAX_CARBON_KG_PER_KWH
 
 OPTION_COLS = ["order_id", "plant", "week", "product", "qty", "destination", "due", "production_cost",
                "energy_cost", "transport_cost", "duty_cost", "landed_cost", "carbon_kg", "ship_date",
@@ -37,7 +38,10 @@ def ship_date(week: int, start: date) -> date:
 
 
 def plant_rows(plants: pd.DataFrame, start: date, weeks: int) -> pd.DataFrame:
-    """One row per plant x product x week, applying week_start overrides for carbon intensity."""
+    """One row per plant x product x week, applying carbon intensity that changes by week.
+
+    Two formats: week_start override rows, or carbon_kg_per_kwh_week_<N> columns (N = production week).
+    """
     p = plants.copy()
     if "week_start" not in p:
         p["week_start"] = None
@@ -51,7 +55,11 @@ def plant_rows(plants: pd.DataFrame, start: date, weeks: int) -> pd.DataFrame:
     for w in range(1, weeks + 1):
         wk = over[over["week"] == w].drop(columns=["week"])
         overridden = set(zip(wk["plant"], wk["product"], strict=False))
-        b = base[[(pl, pr) not in overridden for pl, pr in zip(base["plant"], base["product"], strict=False)]]
+        b = base[[(pl, pr) not in overridden for pl, pr in zip(base["plant"], base["product"], strict=False)]].copy()
+        col = f"carbon_kg_per_kwh_week_{w}"  # optional column from scripts/generate_data.py
+        if col in b:
+            v = pd.to_numeric(b[col], errors="coerce")
+            b["carbon_kg_per_kwh"] = v.where(v.between(0, MAX_CARBON_KG_PER_KWH), b["carbon_kg_per_kwh"])
         rows.append(pd.concat([b, wk]).assign(week=w))
     return pd.concat(rows, ignore_index=True)
 

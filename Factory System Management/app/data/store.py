@@ -3,11 +3,11 @@ import hashlib
 import json
 import sqlite3
 from contextlib import closing
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pandas as pd
 
-from app.config import db_path, set_setting
+from app.config import db_path, planning_start, set_setting
 from app.data.loader import TABLES, load_csv
 from app.data.validate import OPTIONAL, SCHEMA, cross_checks, validate_table
 
@@ -75,14 +75,52 @@ def get_rejects() -> list[dict]:
     return [{"file": f, "row": r, "column": c, "reason": m} for f, r, c, m in rows]
 
 
-def ingest_bytes(content: bytes, table: str, filename: str | None = None) -> dict:
+WEEK_CARBON_PREFIX = "carbon_kg_per_kwh_week_"
+
+
+def infer_planning_start(df: pd.DataFrame) -> tuple[date | None, str | None]:
+    """If most due dates fall on or before the planning start, that start does not belong to this data.
+
+    Without this, judge data dated before the stored start would have every order rejected. The new start is the
+    Monday at least one week before the earliest due date, so every order has a production week.
+    """
+    dues = []
+    for v in df.get("due", []):
+        try:
+            dues.append(date.fromisoformat(str(v).strip()))
+        except ValueError:
+            continue
+    start = planning_start()
+    early = sum(d <= start for d in dues)
+    if not dues or early * 2 <= len(dues):
+        return None, None
+    first = min(dues) - timedelta(days=7)
+    new = first - timedelta(days=first.weekday())
+    return new, (f"{early} of {len(dues)} due dates were on or before the planning start {start}, so the planning "
+                 f"start was set from the data to {new} (the Monday at least a week before the earliest due date "
+                 f"{min(dues)}). Pass planning_start or a data card to set it yourself.")
+
+
+def ingest_bytes(content: bytes, table: str, filename: str | None = None, infer_start: bool = True) -> dict:
     """Load, validate and store one CSV. Shared by POST /ingest and the CLI loader.
 
-    Raises LoadError / FileRejected when nothing in the file is usable.
+    Raises LoadError / FileRejected when nothing in the file is usable. infer_start=False when the caller set
+    the planning start explicitly for this load.
     """
     df = load_csv(content, table)
+    first_notes = []
+    if table == "orders" and infer_start:
+        new_start, note = infer_planning_start(df)
+        if new_start:
+            set_setting("planning_start", new_start.isoformat())
+            first_notes.append(note)
+    if table == "plants":
+        weekly = sorted(c for c in df.columns if c.startswith(WEEK_CARBON_PREFIX))
+        if weekly:
+            first_notes.append(f"weekly carbon columns {', '.join(weekly)} are used for those production weeks "
+                               "(week 1 starts on the planning start); other weeks use carbon_kg_per_kwh")
     valid, rejects = validate_table(table, df, file=f"{table}.csv")
-    notes = valid.attrs.get("notes", [])
+    notes = first_notes + valid.attrs.get("notes", [])
     if table == "capacity_events":
         plants = read_table("plants")
         if plants is not None:

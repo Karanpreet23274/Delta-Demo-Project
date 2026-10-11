@@ -64,7 +64,7 @@ async def ingest(file: UploadFile = File(...), meta: str | None = Form(None), ta
         raise HTTPException(422, f"Bad planning_start or data_card: {e}") from e
     content = await file.read(cfg()["limits"]["max_upload_bytes"] + 1)
     try:
-        result = ingest_bytes(content, table)
+        result = ingest_bytes(content, table, infer_start=not card.get("planning_start"))
     except (LoadError, FileRejected) as e:
         return JSONResponse(status_code=422, content={"table": table, "rows_loaded": 0, "rows_rejected": None,
                                                       "status": "rejected", "error": str(e)})

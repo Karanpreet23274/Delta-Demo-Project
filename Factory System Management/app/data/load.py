@@ -34,10 +34,12 @@ def main(argv=None) -> int:
         print(s)
         lines.append(s)
 
+    explicit_start = bool(a.planning_start)
     card_path = Path(a.data_card) if a.data_card else folder / "data_card.json"
     if card_path.exists():
         try:
             applied = apply_data_card(json.loads(card_path.read_text(encoding="utf-8")))
+            explicit_start = explicit_start or any(x.startswith("planning_start") for x in applied)
             out(f"data card {card_path.name}: {'; '.join(applied) or 'no planning_start or row_counts'}")
         except (ValueError, json.JSONDecodeError) as e:
             out(f"data card {card_path.name}: ignored ({e})")
@@ -52,7 +54,7 @@ def main(argv=None) -> int:
             out(f"{table:17} not found (skipped)")
             continue
         try:
-            r = ingest_bytes(path.read_bytes(), table)
+            r = ingest_bytes(path.read_bytes(), table, infer_start=not explicit_start)
         except (LoadError, FileRejected) as e:
             out(f"{table:17} REJECTED  {e}")
             failed = True

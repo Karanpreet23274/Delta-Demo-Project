@@ -94,8 +94,12 @@ curl localhost:8000/trace/<run_id>
   - `POST /ingest` with `meta={"table": "orders", "planning_start": "2026-11-02"}` or `meta={"table": "...", "data_card": {...}}`.
 
   Set it before loading orders, because due dates are checked against it. If none is given, `config.yaml` (2026-10-12) is used.
+
+  If most due dates in a new orders file fall on or before the current planning start (for example, judge data dated earlier and loaded without a data card), the loader sets the start from the data: the Monday at least one week before the earliest due date. The upload response and the loader say so. A start given in the same load (flag, `meta` or data card) is never overridden.
 - **Row-count check (check 6).** It compares each file's row count with the data card's `row_counts`. With no data card it shows *not checked*, never a silent pass.
 - **Percentages.** `duty_pct` and `capacity_loss_pct` are accepted as percentages (30) or fractions (0.3), decided per file. If every value in the column is between 0 and 1, the column is read as fractions, and the upload response and loader say so. A scenario sent to `/analyze` with `capacity_loss_pct` below 1 is read as a fraction.
+- **Carbon that changes by week.** Two formats are accepted: `week_start` override rows, or `carbon_kg_per_kwh_week_<N>` columns (written by `scripts/generate_data.py`), where N is the production week counted from the planning start. Weeks with no value use `carbon_kg_per_kwh`.
+- **Re-plan requests in plain words.** "A new capacity event was loaded. Re-plan." uses every loaded event. "Plant C is down for two weeks" means a 100% loss in weeks 1–2. "Weeks 2-3" sets the weeks. A scenario JSON without a `type` key (for example `{"plant": "B", "capacity_loss_pct": 0.3}`) is read as a capacity loss.
 - **Saved report.** `--report <file>` saves the validation report. The sample pack's report is in `data/sample/validation_output.txt`.
 
 
@@ -135,11 +139,11 @@ On the sample pack (`eval/REPORT.md`, `tradeoff-frontier`), the implied price of
 
 ## Results (from `eval/REPORT.md`, MOCK_LLM)
 
-- 28 / 28 evaluation cases pass, and 100% of returned plans pass the independent validator.
+- 34 / 34 evaluation cases pass, and 100% of returned plans pass the independent validator.
 - The solver plan at 70/30 costs 1,659,698 and emits 179.4 t, with 2 late orders (both have no on-time option anywhere).
 - The greedy cheapest-plant plan costs 1,617,691 and emits 233.0 t, with **114 late orders**; it fails the validator. This is the level-2 baseline the guide asks us to show the flaws of.
 - CP-SAT and CBC reach the same optimum within 8 currency units. CP-SAT takes 0.6 s and CBC 2.1 s, so CP-SAT is the default.
-- Latency p50 0.7 s and p95 10.6 s. The p95 comes from re-plans that run to the 10 s solver time limit.
+- Latency p50 0.9 s and p95 10.2 s. The p95 comes from re-plans that run to the 10 s solver time limit.
 
 ## Assumptions
 
