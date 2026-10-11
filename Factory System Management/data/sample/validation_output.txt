@@ -1,0 +1,16 @@
+data card data_card.json: planning_start 2026-10-12; row_counts orders=150, plants=18, transport_duties=36, capacity_events=1
+planning start 2026-10-12
+
+plants            loaded    rows_loaded=18 rows_rejected=0
+orders            loaded    rows_loaded=150 rows_rejected=0
+transport_duties  loaded    rows_loaded=36 rows_rejected=0
+capacity_events   loaded    rows_loaded=1 rows_rejected=0
+
+Validation checks
+  [PASS] Every order's product can be made in at least one plant
+  [PASS] Every plant and destination pair has a transport row
+  [PASS] Capacity is positive, in units per week
+  [PASS] Due dates are after the planning start
+  [PASS] Carbon intensity is in kg CO2e per kWh
+  [PASS] Row counts match the data card  (orders 150, plants 18, transport_duties 36, capacity_events 1)
+6 of 6 passed

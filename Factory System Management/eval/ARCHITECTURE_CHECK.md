@@ -34,9 +34,9 @@
 | D O-077 | Number guard checked the explanation | ✅ |  |
 | E Data drop | Event validation: unknown plant, dates in order, loss 0-100 % (3 of 4 rejected) | ✅ | Capacity loss must be between 0 and 100 percent; End date is before the start date; Unknown plant Z (event E-9) |
 | E Data drop | Re-plan uses the loaded event and runs apply_scenario → solve → validate → compare | ✅ | Capacity event E-2: Plant C loses 40% from 2026-10-19 to 2026-11-01 (pro rata by day) |
-| E Data drop | Re-plan is a separate run linked to its baseline | ✅ | al-951d17 ← parent al-e6c3bd |
+| E Data drop | Re-plan is a separate run linked to its baseline | ✅ | al-cf5c70 ← parent al-ed9294 |
 | E Data drop | Baseline run left unchanged | ✅ |  |
-| E Data drop | Moved orders listed with a reason | ✅ | 9 moved, 92% unchanged |
+| E Data drop | Moved orders listed with a reason | ✅ | 9 moved, 91% unchanged |
 | F Guardrails | Fabricated figures caught; writer retried exactly once | ✅ | unmatched first try: ['9,999,999', '250,000'] |
 | F Guardrails | After the second failure the template (computed numbers) is returned | ✅ |  |
 | F Guardrails | LLM calls per request stay within 2 + 1 retry | ✅ | llm_calls=2 |

@@ -2,11 +2,12 @@
 
 Bad rows are rejected with a reason; the loader never crashes on a broken file.
 """
+import json
 from datetime import date
 
 import pandas as pd
 
-from app.config import cfg, planning_start
+from app.config import cfg, get_setting, planning_start
 
 # Annex B required columns and their types. Extra columns are allowed.
 SCHEMA = {
@@ -23,6 +24,8 @@ OPTIONAL = {"plants": {"energy_price_per_kwh": "float", "week_start": "date"}}
 KEYS = {"orders": ["order_id"], "plants": ["plant", "product", "week_start"],
         "transport_duties": ["plant", "destination"], "capacity_events": ["event_id"]}
 MAX_CARBON_KG_PER_KWH = 2.0  # above this the value is almost certainly g/kWh, not kg/kWh
+# Annex B calls these a "percentage" / "share"; packs write them either as 0-100 or as fractions (0.65 = 65%).
+PERCENT_COLS = {"transport_duties": "duty_pct", "capacity_events": "capacity_loss_pct"}
 
 
 class FileRejected(ValueError):
@@ -90,9 +93,8 @@ def validate_table(table: str, df: pd.DataFrame, file: str | None = None,
         raise FileRejected(f"{file} is missing the required column {', '.join(missing)}. Nothing was loaded.")
     types = {**SCHEMA[table], **{c: t for c, t in OPTIONAL.get(table, {}).items() if c in df.columns}}
 
-    valid, rejects, seen = [], [], set()
+    parsed = []  # (row_no, record, error)
     for i, raw in enumerate(df.to_dict("records")):
-        row_no = i + 2  # header is line 1
         rec, err = dict(raw), None
         for col, kind in types.items():
             v = raw.get(col, "")
@@ -104,6 +106,21 @@ def validate_table(table: str, df: pd.DataFrame, file: str | None = None,
             except ValueError as e:
                 err = (col, f"'{v}' {e}" if "must" in str(e) or "empty" in str(e) else f"'{v}' is not a valid {kind}")
                 break
+        parsed.append((i + 2, rec, err))  # header is line 1
+
+    notes = []
+    col = PERCENT_COLS.get(table)
+    if col:
+        vals = [r[col] for _, r, e in parsed if e is None]
+        if vals and max(vals) <= 1 and max(vals) > 0:
+            # every value is a fraction: read 0.65 as 65 % so the rest of the system sees 0-100
+            for _, r, e in parsed:
+                if e is None:
+                    r[col] = round(r[col] * 100, 6)
+            notes.append(f"{col}: all values are between 0 and 1, read as fractions (0.65 = 65%)")
+
+    valid, rejects, seen = [], [], set()
+    for row_no, rec, err in parsed:
         if err is None:
             err = _value_rules(table, rec, start)
         key = tuple(rec.get(k) for k in KEYS[table])
@@ -115,16 +132,21 @@ def validate_table(table: str, df: pd.DataFrame, file: str | None = None,
         seen.add(key)
         valid.append(rec)
     out = pd.DataFrame(valid, columns=list(df.columns) + [c for c in types if c not in df.columns])
+    out.attrs["notes"] = notes
     return out, rejects
 
 
-def cross_checks(t: dict[str, pd.DataFrame]) -> list[dict]:
-    """The six checks from guide section 4.5, over whatever tables are loaded."""
+def cross_checks(t: dict[str, pd.DataFrame], file_rows: dict[str, int] | None = None) -> list[dict]:
+    """The six checks from guide section 4.5, over whatever tables are loaded.
+
+    file_rows: rows per file as read (loaded + rejected), compared with the data card's row_counts.
+    A check that cannot run (no data card) has passed=None, shown as "not checked", never as a pass.
+    """
     orders, plants, lanes = t.get("orders"), t.get("plants"), t.get("transport_duties")
     checks = []
 
     def add(name, ok, detail=""):
-        checks.append({"check": name, "passed": bool(ok), "detail": detail})
+        checks.append({"check": name, "passed": None if ok is None else bool(ok), "detail": detail})
 
     if orders is not None and plants is not None and len(orders) and len(plants):
         makeable = set(plants["product"])
@@ -151,12 +173,17 @@ def cross_checks(t: dict[str, pd.DataFrame]) -> list[dict]:
     ci_ok = plants is not None and len(plants) and plants["carbon_kg_per_kwh"].between(0, MAX_CARBON_KG_PER_KWH).all()
     add(f"Carbon intensity is in {unit['carbon_intensity']}", ci_ok)
 
-    expected = cfg().get("data_card_row_counts") or {}
-    mism = [f"{k}: {len(t[k])} loaded, data card says {v}" for k, v in expected.items()
-            if v is not None and k in t and len(t[k]) != v]
-    add("Row counts match the data card", not mism,
-        "; ".join(mism) if mism else ("" if any(v is not None for v in expected.values())
-                                      else "no data-card counts configured"))
+    stored = get_setting("data_card_row_counts")
+    expected = json.loads(stored) if stored else {k: v for k, v in (cfg().get("data_card_row_counts") or {}).items()
+                                                  if v is not None}
+    rows = file_rows or {k: len(v) for k, v in t.items()}
+    compared = {k: v for k, v in expected.items() if k in rows}
+    if not compared:
+        add("Row counts match the data card", None, "not checked: no data card loaded (data_card.json or /ingest meta)")
+    else:
+        mism = [f"{k}: file has {rows[k]} rows, data card says {v}" for k, v in compared.items() if rows[k] != v]
+        add("Row counts match the data card", not mism,
+            "; ".join(mism) if mism else ", ".join(f"{k} {v}" for k, v in compared.items()))
     return checks
 
 

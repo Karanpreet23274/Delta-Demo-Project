@@ -1,0 +1,20 @@
+{
+  "name": "Factory System Management sample pack",
+  "version": "1.0",
+  "generated_by": "data/generate.py",
+  "generator_seed": 42,
+  "planning_start": "2026-10-12",
+  "row_counts": {
+    "orders": 150,
+    "plants": 18,
+    "transport_duties": 36,
+    "capacity_events": 1
+  },
+  "units": {
+    "capacity": "units per plant-week",
+    "carbon_kg_per_kwh": "kg CO2e per kWh",
+    "percentages": "percent; 30 = 30%"
+  },
+  "synthetic_only": true,
+  "privacy": "Synthetic; no real company or personal data."
+}

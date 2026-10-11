@@ -7,6 +7,7 @@ see data/DATA_CARD.md for where.
 """
 import argparse
 import csv
+import json
 import random
 from datetime import date, timedelta
 from pathlib import Path
@@ -108,8 +109,17 @@ def generate(seed: int, out: Path, n_orders: int = 150) -> dict:
     write(out / "plants.csv", plants)
     write(out / "transport_duties.csv", transport)
     write(out / "capacity_events.csv", events)
-    return {"orders": len(orders), "plants": len(plants), "transport_duties": len(transport),
-            "capacity_events": len(events)}
+    counts = {"orders": len(orders), "plants": len(plants), "transport_duties": len(transport),
+              "capacity_events": len(events)}
+    # machine-readable card (same keys as scripts/generate_data.py): the loader reads planning_start
+    # and row_counts from it; data/DATA_CARD.md is the human-readable card
+    card = {"name": "Factory System Management sample pack", "version": "1.0", "generated_by": "data/generate.py",
+            "generator_seed": seed, "planning_start": START.isoformat(), "row_counts": counts,
+            "units": {"capacity": "units per plant-week", "carbon_kg_per_kwh": "kg CO2e per kWh",
+                      "percentages": "percent; 30 = 30%"},
+            "synthetic_only": True, "privacy": "Synthetic; no real company or personal data."}
+    (out / "data_card.json").write_text(json.dumps(card, indent=2) + "\n", encoding="utf-8")
+    return counts
 
 
 if __name__ == "__main__":

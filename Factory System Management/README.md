@@ -86,6 +86,19 @@ curl localhost:8000/trace/<run_id>
 
 `POST /analyze` also accepts `policy` (`never_late` | `allow_late`) and `planning_start`. If `ADMIN_TOKEN` is set, `POST /ingest` requires the `X-Admin-Token` header.
 
+### Loading judge data: planning start, data card, units
+
+- **Planning start.** It is stored with the data, not fixed in code. It can come from three places:
+  - `python -m app.data.load --dir <folder> --planning-start 2026-11-02`;
+  - a `data_card.json` in the folder (the format written by `data/generate.py` and `scripts/generate_data.py`);
+  - `POST /ingest` with `meta={"table": "orders", "planning_start": "2026-11-02"}` or `meta={"table": "...", "data_card": {...}}`.
+
+  Set it before loading orders, because due dates are checked against it. If none is given, `config.yaml` (2026-10-12) is used.
+- **Row-count check (check 6).** It compares each file's row count with the data card's `row_counts`. With no data card it shows *not checked*, never a silent pass.
+- **Percentages.** `duty_pct` and `capacity_loss_pct` are accepted as percentages (30) or fractions (0.3), decided per file. If every value in the column is between 0 and 1, the column is read as fractions, and the upload response and loader say so. A scenario sent to `/analyze` with `capacity_loss_pct` below 1 is read as a fraction.
+- **Saved report.** `--report <file>` saves the validation report. The sample pack's report is in `data/sample/validation_output.txt`.
+
+
 ## Cost and carbon model
 
 For order *o* (quantity *q*) made in plant *p* in week *w*:
@@ -133,6 +146,7 @@ On the sample pack (`eval/REPORT.md`, `tradeoff-frontier`), the implied price of
 - Duty is charged on production + energy + transport.
 - If `plants.csv` has no energy price column, the default price in `config.yaml` is used.
 - Capacity is per plant when all of a plant's rows state the same weekly capacity.
+- A `duty_pct` or `capacity_loss_pct` column whose values all lie between 0 and 1 is read as fractions. So a file whose duties are all below 1%, written as percentages, would be misread; the loader prints a note whenever it converts.
 - A capacity loss applies pro rata to the days of each week it covers.
 - If a re-plan request gives no dates, it uses the dates of that plant's row in `capacity_events.csv`, or else the whole horizon.
 - The baseline for re-plans, explanations and briefs is the most recent allocation run.

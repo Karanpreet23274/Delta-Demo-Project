@@ -10,10 +10,10 @@ from fastapi.responses import JSONResponse
 from app.agent import llm
 from app.agent.graph import LIMITATIONS, build_assumptions, run_graph
 from app.api.schemas import AnalyzeRequest, AnalyzeResponse, Recommendation
-from app.config import cfg, env
+from app.config import cfg, env, planning_start
 from app.data.loader import TABLES, LoadError
-from app.data.store import connect, datasets, get_rejects, ingest_bytes, read_all
-from app.data.validate import FileRejected, cross_checks
+from app.data.store import apply_data_card, connect, datasets, get_rejects, ingest_bytes, run_checks
+from app.data.validate import FileRejected
 from app.tools.planner import DataNotReady
 from app.trace.store import get_run, get_trace, list_runs, new_run_id, save_trace
 
@@ -45,26 +45,39 @@ async def ingest(file: UploadFile = File(...), meta: str | None = Form(None), ta
     token = env("ADMIN_TOKEN")
     if token and x_admin_token != token:
         raise HTTPException(401, "Missing or wrong X-Admin-Token")
+    m = {}
     if meta:
         try:
-            table = json.loads(meta).get("table", table)
+            m = json.loads(meta)
+            table = m.get("table", table)
         except (json.JSONDecodeError, AttributeError) as e:
             raise HTTPException(422, "meta must be JSON like {\"table\": \"orders\"}") from e
     if table not in TABLES:
         raise HTTPException(422, f"table must be one of {', '.join(TABLES)}")
+    # optional: {"planning_start": "YYYY-MM-DD"} and/or {"data_card": {...data_card.json...}}; set before validating
+    card = dict(m.get("data_card") or {})
+    if m.get("planning_start"):
+        card["planning_start"] = m["planning_start"]
+    try:
+        applied = apply_data_card(card) if card else []
+    except (ValueError, TypeError) as e:
+        raise HTTPException(422, f"Bad planning_start or data_card: {e}") from e
     content = await file.read(cfg()["limits"]["max_upload_bytes"] + 1)
     try:
         result = ingest_bytes(content, table)
     except (LoadError, FileRejected) as e:
         return JSONResponse(status_code=422, content={"table": table, "rows_loaded": 0, "rows_rejected": None,
                                                       "status": "rejected", "error": str(e)})
-    result["checks"] = cross_checks(read_all())
+    result["planning_start"] = planning_start().isoformat()
+    result["data_card_applied"] = applied
+    result["checks"] = run_checks()
     return result
 
 
 @app.get("/data/status")
 def data_status():
-    return {"datasets": datasets(), "rejects": get_rejects(), "checks": cross_checks(read_all())}
+    return {"datasets": datasets(), "rejects": get_rejects(), "checks": run_checks(),
+            "planning_start": planning_start().isoformat()}
 
 
 @app.get("/trace/{run_id}")

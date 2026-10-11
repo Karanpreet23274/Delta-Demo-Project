@@ -1,14 +1,15 @@
 """SQLite data store for loaded tables, rejects and dataset versions. All SQL is parameterised."""
 import hashlib
+import json
 import sqlite3
 from contextlib import closing
 from datetime import UTC, date, datetime
 
 import pandas as pd
 
-from app.config import db_path
+from app.config import db_path, set_setting
 from app.data.loader import TABLES, load_csv
-from app.data.validate import OPTIONAL, SCHEMA, validate_table
+from app.data.validate import OPTIONAL, SCHEMA, cross_checks, validate_table
 
 
 def connect() -> sqlite3.Connection:
@@ -81,6 +82,7 @@ def ingest_bytes(content: bytes, table: str, filename: str | None = None) -> dic
     """
     df = load_csv(content, table)
     valid, rejects = validate_table(table, df, file=f"{table}.csv")
+    notes = valid.attrs.get("notes", [])
     if table == "capacity_events":
         plants = read_table("plants")
         if plants is not None:
@@ -93,4 +95,24 @@ def ingest_bytes(content: bytes, table: str, filename: str | None = None) -> dic
     save_table(table, valid, rejects, hashlib.sha256(content).hexdigest())
     status = "loaded" if not rejects else ("partial" if len(valid) else "rejected")
     return {"table": table, "rows_loaded": len(valid), "rows_rejected": len(rejects),
-            "status": status, "rejects": rejects[:200]}
+            "status": status, "rejects": rejects[:200], "notes": notes}
+
+
+def run_checks() -> list[dict]:
+    """The six data checks over the stored tables; row counts compare whole files (loaded + rejected)."""
+    files = {t: d["rows_loaded"] + d["rows_rejected"] for t, d in datasets().items()}
+    return cross_checks(read_all(), files)
+
+
+def apply_data_card(card: dict) -> list[str]:
+    """Take planning_start and row_counts from a data card (data_card.json format). Returns what was set."""
+    applied = []
+    if card.get("planning_start"):
+        start = date.fromisoformat(str(card["planning_start"]))  # ValueError on a bad date
+        set_setting("planning_start", start.isoformat())
+        applied.append(f"planning_start {start.isoformat()}")
+    counts = {k: int(v) for k, v in (card.get("row_counts") or {}).items() if k in TABLES}
+    if counts:
+        set_setting("data_card_row_counts", json.dumps(counts))
+        applied.append("row_counts " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    return applied

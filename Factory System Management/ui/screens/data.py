@@ -45,10 +45,12 @@ if msg := st.session_state.pop("upload_error", None):
 left, right = st.columns(2)
 with left, st.container(border=True):
     checks = status["checks"]
-    passed = sum(c["passed"] for c in checks)
-    st.markdown(f"**Validation checks** · {passed} of {len(checks)} passed")
+    ran = [c for c in checks if c["passed"] is not None]
+    passed = sum(c["passed"] for c in ran)
+    st.markdown(f"**Validation checks** · {passed} of {len(ran)} passed"
+                + (f" · {len(checks) - len(ran)} not checked" if len(ran) < len(checks) else ""))
     for c in checks:
-        st.markdown(f"{'✅' if c['passed'] else '❌'} {c['check']}" + (f"  \n  :gray[{c['detail']}]" if c["detail"] else ""))
+        st.markdown(f"{ {True: '✅', False: '❌', None: '⚪'}[c['passed']] } {c['check']}" + (f"  \n  :gray[{c['detail']}]" if c["detail"] else ""))
 with right, st.container(border=True):
     st.markdown("**Rejected rows**")
     rej = pd.DataFrame(status["rejects"])
@@ -74,7 +76,8 @@ with st.container(border=True):
                              format_func=lambda p: {"never_late": "Never late — orders with no on-time option are flagged, not hidden",
                                                     "allow_late": "Allow late with a penalty — late orders are counted and shown"}[p])
     with c:
-        ss.start = st.date_input("Planning start", value=ss.get("start"), help="Defaults to config.yaml planning_start")
+        ss.start = st.date_input("Planning start", value=ss.get("start"), help="Leave empty to use the planning start loaded with the data "
+                                 f"({status.get('planning_start', 'config.yaml')})")
     ready = all(t in status["datasets"] and status["datasets"][t]["rows_loaded"] for t in
                 ("orders", "plants", "transport_duties"))
     if st.button("Generate allocation", type="primary", disabled=not ready):

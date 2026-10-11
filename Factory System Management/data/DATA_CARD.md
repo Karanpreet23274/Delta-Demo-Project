@@ -5,8 +5,9 @@
 | Name and version | `data/sample`, v1.0, generated 2026-10-11 |
 | How it was made | `python data/generate.py --seed 42` (plain Python `random`, no LLM). The plant, lane and duty parameters are fixed in the script; order product, destination, quantity and due date are drawn from the seed. Six orders are then overwritten on purpose (traps below). |
 | What it contains | `orders.csv` 150 rows · `plants.csv` 18 rows (3 plants × their products, plus 3 weekly carbon-intensity override rows) · `transport_duties.csv` 36 rows (3 plants × 12 destinations) · `capacity_events.csv` 1 row. 12 destinations, 52,690 units in total. Due dates 2026-10-23 to 2026-11-19; planning starts 2026-10-12. |
+| Machine-readable card | `data/sample/data_card.json`: planning_start and row_counts, read by the loader. Percentages are written as percent (30 = 30%). |
 | Schema | Annex B, plus two optional `plants.csv` columns: `energy_price_per_kwh` (EUR/kWh) and `week_start` (row overrides carbon intensity for that week). Units: capacity in units per week, carbon intensity in kg CO₂e per kWh, transport carbon in kg CO₂e per unit, currency EUR. |
-| Checks run | `python -m app.data.load --dir data/sample`: 0 rejected rows, 6 of 6 validation checks passed. |
+| Checks run | `python -m app.data.load --dir data/sample --report data/sample/validation_output.txt`: 0 rejected rows, 6 of 6 validation checks passed, including row counts against `data/sample/data_card.json`. |
 | Privacy | Entirely synthetic. No real company, customer or personal data. |
 
 ## Plants

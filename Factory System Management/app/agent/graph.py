@@ -59,7 +59,10 @@ def router(s: State) -> State:
     t0 = time.perf_counter()
     sc = s.get("scenario_json") or {}
     if sc.get("type") in ("capacity_loss", "replan"):
-        intent = Intent(type="replan", plant=sc.get("plant"), capacity_loss_pct=sc.get("capacity_loss_pct"),
+        loss = sc.get("capacity_loss_pct")
+        if loss is not None and 0 < float(loss) < 1:  # Annex B "share of capacity lost": 0.3 means 30 %
+            loss = round(float(loss) * 100, 6)
+        intent = Intent(type="replan", plant=sc.get("plant"), capacity_loss_pct=loss,
                         from_date=sc.get("from_date"), to_date=sc.get("to_date"))
         meta = {"source": "scenario_json", "llm_calls": 0, "tokens": 0}
     elif sc.get("type") in ("carbon_cut", "tradeoff"):
