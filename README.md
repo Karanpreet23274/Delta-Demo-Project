@@ -1,164 +1,153 @@
-# Multi-Plant Order Allocation with Cost and Carbon
+# Multi-Plant dataset generator
 
-HCLTech Future Ready AI Engineer Hackathon. The system allocates orders to three plants, shows the cost/carbon/lateness trade-off, re-plans when a plant loses capacity, and writes a management brief.
+Generate synthetic practice data for **Multi-Plant Order Allocation with Cost and Carbon**. Python 3.11+ is enough; no package installation, API key, or internet connection is needed.
 
-**Principle: the solver decides, the validator verifies, the LLM explains.** Every plan, number and ranking comes from code (calculator, OR-Tools CP-SAT, independent validator). The LLM only parses requests into a typed intent and words verified tool output; a number guard rejects any figure the tools did not produce.
+The generator was checked against Sections 4.3–4.5 and Annexes B/D of the supplied participant guide. The design review supplies context; its suggested application architecture is outside this generator's scope.
 
-## Architecture
+## Generate the default dataset
 
-```mermaid
-flowchart TD
-    UI["Streamlit UI (7 screens)"] -->|httpx| API
-    CURL["Judges: curl / scripts"] --> API
-    CLI["CLI loader: python -m app.data.load"] --> VAL
-    subgraph API["FastAPI: POST /analyze, POST /ingest, GET /health, GET /trace/{run_id}"]
-    end
-    API -->|ingest| VAL["Data validator: schema, types, 6 checks"] --> DB[("SQLite: tables, runs, trace steps")]
-    API -->|analyze| G
-    subgraph G["LangGraph (one graph)"]
-      R["router (LLM, typed Intent)"] --> GU{guard}
-      GU -->|refused / clarification_needed| OUT[assemble]
-      GU --> OPT[optimiser] & SC[scenario] & EX[explainer] & BR[brief_data]
-      OPT --> CH[checker]
-      SC --> CH
-      EX --> CH
-      CH --> W["writer (LLM, evidence JSON only)"]
-      BR --> W
-      W --> NG{number_guard} -->|fail: retry once, then template| W
-      NG --> OUT
-    end
-    G -->|tools, no LLM| T["build_options · solve_allocation (CP-SAT) · validate_plan · compute_kpis · apply_scenario · compare_plans · tradeoff_frontier · explain_order"]
-    T --> DB
-```
-
-Only two nodes call the model, so a request makes at most 2 LLM calls, plus 1 retry if the number guard fails. Every other node is plain, unit-tested Python. With `MOCK_LLM=true` both LLM nodes use rules and templates, and everything still works.
-
-| Path | What lives there |
-|---|---|
-| `app/data/` | `loader.py` (limits), `validate.py` (row rules and the 6 checks), `store.py` (SQLite, parameterised), `load.py` (CLI) |
-| `app/models/options.py` | Calculator: landed cost, carbon and arrival for each order × plant × week; capacity events |
-| `app/solver/` | `model.py` (objective, constraints), `milp.py` (CP-SAT, PuLP/CBC, greedy baseline), `validator.py` (independent re-check) |
-| `app/tools/` | `planner.py`, `kpis.py`, `scenario.py`, `tradeoff.py`, `explain.py` |
-| `app/agent/` | `graph.py` (LangGraph), `intent.py` (typed Intent and rule parser), `llm.py` (provider switch), `guard.py` (number check), `templates.py` |
-| `app/api/` | FastAPI app and Pydantic models |
-| `ui/` | Streamlit (`app.py`, `screens/`); talks only to the API |
-| `eval/` | `cases.yaml` (28 cases), `run_eval.py`, `REPORT.md` |
-| `traces/` | Sample trace records: allocation, scenario, brief, refused |
-| `scripts/` | Configurable dataset generator and validator for stress and practice packs (see [scripts/README.md](scripts/README.md)); outputs go to `data/synthetic*/`, which is not committed |
-
-## Setup and run
+Open a terminal in this project directory:
 
 ```bash
-cp .env.example .env          # set LLM_PROVIDER, LLM_MODEL, ANTHROPIC_API_KEY, MOCK_LLM=false to use a model
-docker compose up --build     # API on :8000 (loads data/sample on first start), UI on :8501
+cd /home/ayush/Desktop/HCL-Hackathon/Delta-Demo-Project
+python3 scripts/generate_data.py
+python3 scripts/validate_data.py
 ```
 
-Without Docker (Python 3.11):
+Both commands should finish with `VALIDATION: PASS`. Generation automatically validates the files, so the second command is useful after you edit a CSV.
+
+Files are written to `data/synthetic/`:
+
+| File | Default rows | Contents |
+| --- | ---: | --- |
+| `orders.csv` | 150 | Product, quantity, destination, due date |
+| `plants.csv` | 9 | Eligible plant/product combinations and economics |
+| `transport_duties.csv` | 36 | All 3 plants × 12 destinations |
+| `capacity_events.csv` | 1 | Plant C loses 65% capacity for two weeks |
+| `data_card.json` | — | Seed, parameters, dates, units, limitations, validation results |
+| `validation_report.json` | — | Errors, warnings, counts, challenge-case audit |
+
+There are **3 plants**, despite 9 plant rows: each row describes one eligible product at a plant. Generated files are ignored by Git. Re-running into the same output directory replaces these six files; use `--output` to keep separate datasets.
+
+## Change the dataset size
+
+A larger practice pack:
 
 ```bash
-python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # bin/ on Linux/macOS
-python -m app.data.load --dir data/sample
-uvicorn app.api.main:app --port 8000
-streamlit run ui/app.py
+python3 scripts/generate_data.py --orders 500 --plants 5 --products 6 --destinations 18 --events 4 --weeks 4 --seed 42 --output data/stress_500
+python3 scripts/validate_data.py --data-dir data/stress_500
 ```
 
-Tests, lint and evaluation:
+A small pack for debugging:
 
 ```bash
-pytest -q && ruff check . && python eval/run_eval.py
+python3 scripts/generate_data.py --orders 40 --plants 4 --products 3 --destinations 6 --events 1 --output data/debug
+python3 scripts/validate_data.py --data-dir data/debug
 ```
 
-## Sample curl commands
+A different planning start:
 
 ```bash
-curl localhost:8000/health
-curl -F file=@data/sample/orders.csv -F 'meta={"table": "orders"}' localhost:8000/ingest
-curl -X POST localhost:8000/analyze -H 'Content-Type: application/json' -d '{"request": "Allocate this week'"'"'s orders."}'
-curl -X POST localhost:8000/analyze -H 'Content-Type: application/json' -d '{"request": "What does a 10% carbon cut cost?", "weights": {"cost": 0.7, "carbon": 0.3}}'
-curl -X POST localhost:8000/analyze -H 'Content-Type: application/json' -d '{"request": "Re-plan", "scenario": {"type": "capacity_loss", "plant": "B", "capacity_loss_pct": 30, "from_date": "2026-10-19", "to_date": "2026-11-01"}}'
-curl -X POST localhost:8000/analyze -H 'Content-Type: application/json' -d '{"request": "Why was order 77 built in Plant C?"}'
-curl -X POST localhost:8000/analyze -H 'Content-Type: application/json' -d '{"request": "Write the brief for the leadership team."}'
-curl localhost:8000/trace/<run_id>
+python3 scripts/generate_data.py --start-date 2026-11-02 --seed 123 --output data/november
+python3 scripts/validate_data.py --data-dir data/november
 ```
 
-`POST /analyze` also accepts `policy` (`never_late` | `allow_late`) and `planning_start`. If `ADMIN_TOKEN` is set, `POST /ingest` requires the `X-Admin-Token` header.
+The validator reads the planning start from `data_card.json`. The generator requires a Monday so production weeks have clear boundaries.
 
-## Cost and carbon model
+| Option | Default | Meaning |
+| --- | ---: | --- |
+| `--orders` | 150 | Exact number of orders |
+| `--plants` | 3 | Number of plants; labels A, B, C, D… |
+| `--products` | 4 | Total product types, including the exclusive product |
+| `--destinations` | 12 | Distinct destinations in orders |
+| `--events` | 1 | Exact number of capacity-loss events |
+| `--weeks` | 4 | Production weeks |
+| `--seed` | 20261011 | Reproducible random seed |
+| `--start-date` | 2026-10-12 | First production Monday |
+| `--output` | automatic | Folder for generated files |
 
-For order *o* (quantity *q*) made in plant *p* in week *w*:
+Without `--output`, the default dimensions use `data/synthetic/`; changed dimensions use `data/synthetic_custom/`. A changed seed or start date alone still uses `data/synthetic/`.
 
-| Term | Formula |
-|---|---|
-| Production | q × unit_cost |
-| Energy | q × energy_kwh_per_unit × energy_price_per_kwh |
-| Transport | q × transport_cost_per_unit |
-| Import duty | duty_pct/100 × (production + energy + transport), a CIF-style base |
-| **Landed cost** | production + energy + transport + duty |
-| **Carbon (kg CO₂e)** | q × (energy_kwh_per_unit × carbon_kg_per_kwh[p, w] + transport carbon_kg_per_unit) |
+Use the same seed, options **and code version** to reproduce identical CSVs. This refactor changes the generation algorithm; old and new versions can produce different CSVs with the same seed.
 
-**Time.** Week *w* covers planning_start + 7(w−1) to +7w−1. An order ships on the last day of its production week and arrives `transit_days` later. Late days = max(0, arrival − due). Unit tests check every formula against hand-worked numbers (`tests/test_core.py::test_formulas_by_hand`).
+Supported minimums: 3 plants, 3 products, 4 destinations, 1 event, 3 weeks, and at least `max(12, destinations + 7)` orders. Some combinations need more orders to fit the exclusive-product scenario and cover all destinations; the CLI explains the error.
 
-## Allocation model
+The participant guide requires plants A/B/C, at least 100 orders, 8 destinations, 3 cheapest-but-late orders, and a capacity-loss event. Smaller packs and extra plants are useful tests but receive warnings and `guide_minimums_met: false`. `valid: true` means the data checks passed; it does not by itself mean the guide minimums were met.
 
-- **Decision.** Binary x[o,p,w]. Each order goes whole to one plant-week.
-- **Unplaced orders.** A slack u[o] with a very large penalty lets the solver always return. Any order left in slack is reported as **infeasible**, with its closest option; it is never hidden.
-- **Constraints.**
-  - Eligibility: no option exists for a plant that cannot make the product or has no lane.
-  - Capacity: weekly capacity per plant, or per plant and product if the CSV states different values per product.
-  - Delivery under `never_late`: late options are removed. An order with *no* on-time option in any plant is placed at its least-late option and **flagged**. Under `allow_late`, each late day carries a penalty.
-- **Objective.** w_cost · Δcost / cost_range + w_carbon · Δcarbon / carbon_range.
-  - Δ is measured from each order's best option.
-  - The range is the sum over orders of (worst − best) option, so each term spans 0–1 and a 70/30 weight really means 70/30 of the achievable trade-off.
-  - Normalising by totals instead let carbon, whose options differ about 5× more in relative terms, swamp the weights. We measured this and switched.
-- **Re-plan.** apply_scenario reduces capacity only for the affected plant and days, pro rata by week. The model is re-solved with the baseline's weights plus a small penalty for each order moved. Deltas are reported like for like, over orders placed in both plans, so a dropped order never looks like a saving. The baseline run is never overwritten.
-- **Frontier.** Re-solve with carbon ≤ (1 − cut) × current carbon for cuts of 5–20%, keeping every currently placed order placed. The points run in parallel with a 5 s limit each. A point that hits the limit is marked `FEASIBLE`: it is the best valid plan found, never an estimate.
+## Understand and modify the code
 
-## Why 70 / 30 by default
+There is one generation path for every size:
 
-On the sample pack (`eval/REPORT.md`, `tradeoff-frontier`), the implied price of cutting carbon rises steeply. A 5% cut costs about 1,000 per tonne saved and a 20% cut about 2,000 per tonne. The 70/30 plan is 0.4% dearer than cost-only but emits 4% less carbon. Moving to 40/60 cuts another 17% of carbon for 2.7% more cost. Cost stays the main driver, and the default sits before the steep part of the curve. Leaders can pick a greener point from the trade-off screen, where each point is a validated plan.
+```text
+CLI options → build_tables() → four table builders → write CSVs/data card → validate
+```
 
-## Results (from `eval/REPORT.md`, MOCK_LLM)
+| File/function | What to change here |
+| --- | --- |
+| `scripts/generate_data.py` → `main()` | CLI defaults |
+| `build_tables()` | Plant labels, product names, destinations, weekly capacities, carbon factors |
+| `build_plants()` | Product eligibility, production cost, energy consumption, electricity price, weekly carbon changes |
+| `build_transport()` | Shipping costs, transit days, import duties, transport emissions |
+| `build_orders()` | Order quantities, due dates, named late orders, exclusive-product demand |
+| `build_events()` | Disruption plant, date range, capacity loss |
+| `generate_dataset()` | File writing and data-card descriptions |
+| `scripts/data_schema.py` | Annex B column lists, CSV helpers, cost calculation, challenge-case audit |
+| `scripts/validate_data.py` | Data checks and validation CLI |
+| `scripts/flexible_data.py` | Compatibility wrapper for old imports; no generation rules |
 
-- 28 / 28 evaluation cases pass, and 100% of returned plans pass the independent validator.
-- The solver plan at 70/30 costs 1,659,698 and emits 179.4 t, with 2 late orders (both have no on-time option anywhere).
-- The greedy cheapest-plant plan costs 1,617,691 and emits 233.0 t, with **114 late orders**; it fails the validator. This is the level-2 baseline the guide asks us to show the flaws of.
-- CP-SAT and CBC reach the same optimum within 8 currency units. CP-SAT takes 0.6 s and CBC 2.1 s, so CP-SAT is the default.
-- Latency p50 0.7 s and p95 10.6 s. The p95 comes from re-plans that run to the 10 s solver time limit.
+For example, to make Plant A's ordinary shipping slower, change its `transit` value in `build_transport()`. To change random ordinary-order quantities, edit `rng.randint(18, 42)` in `build_orders()`. If you change the deliberate scenario rules, update their audit and data-card descriptions too. Keep the required Annex B field names unchanged.
 
-## Assumptions
+The default pack keeps the familiar A/B/C capacities (840/760/350), `P_ONLY_C`, and 20 exclusive orders of 58 units. Other sizes scale capacity and use `P_EXCLUSIVE` at the last plant. All ordinary products remain eligible at A and B. Every market appears in the orders, and every plant has a route to every market.
 
-- Duty is charged on production + energy + transport.
-- If `plants.csv` has no energy price column, the default price in `config.yaml` is used.
-- Capacity is per plant when all of a plant's rows state the same weekly capacity.
-- A capacity loss applies pro rata to the days of each week it covers.
-- If a re-plan request gives no dates, it uses the dates of that plant's row in `capacity_events.csv`, or else the whole horizon.
-- The baseline for re-plans, explanations and briefs is the most recent allocation run.
+## Deliberate challenge cases
 
-## Limitations and known edge cases
+1. `O-LATE-001`, `O-LATE-002`, `O-LATE-003`: A is cheapest but arrives late; another eligible plant arrives on time in week 1.
+2. Exclusive product: only the last plant can manufacture it.
+3. Germany/P1: A is cheaper than B before duty, but its 65% import duty reverses their cost ranking.
+4. The last plant has the lowest carbon intensity and lowest capacity.
+5. A 65% capacity loss affects weeks 2 and 3. In the default pack, exclusive demand is 1,160 units; normal capacity is 1,400 units, while disrupted capacity is 944 units. At least 216 units cannot be completed on schedule. Whole-order restrictions may increase the shortage.
+6. Optional columns change carbon intensity in production weeks 2 and 3.
 
-- Orders are never split across plants or weeks.
-- Transit times are fixed; there are no port or customs delays.
-- Duty and energy prices are constant over the horizon.
-- Frontier points and hard re-plans can stop at the time limit with status `FEASIBLE`. They are still valid, but they may be within a small gap of the optimum.
-- Capacity events are applied only in scenario runs, never silently to the baseline.
-- With a cloud LLM, only the synthetic data pack is sent to the provider. Tracing is local (SQLite).
+For custom packs, exclusive orders are constructed to fit into baseline weeks before the disruption. The validator audits the shortage after the disruption. It does not optimize the allocation.
 
-## LLM configuration
+## Units and assumptions
 
-`LLM_PROVIDER=anthropic` with `LLM_MODEL=claude-sonnet-5-5` (default), or `LLM_PROVIDER=ollama` with `LLM_MODEL=qwen2.5:7b-instruct` as the offline fallback. Keys live in `.env`, which is git-ignored. The router output must validate against the Pydantic `Intent`. If it doesn't, the router retries once and then falls back to the rule parser. The writer sees only the tool-output JSON.
+These are conventions for our synthetic data; confirm the corresponding rules when working with the organizer's pack.
 
-## AI-usage disclosure
+- Capacity is **units per plant per week**, shared across products. The value repeats on plant/product rows: **do not sum those repeated values**.
+- Each whole order is made at one plant in one production week. Production finishes Sunday; arrival is that Sunday plus `transit_days`.
+- Capacity-event dates are inclusive. Events overlapping a week reduce that whole week's capacity; overlapping events use the largest loss, and capacity rounds down to whole units. Generated events align to full weeks.
+- Costs use illustrative currency units. Production cost excludes the separate energy cost.
+- Percentages are decimal fractions: `0.65` means 65%.
+- Carbon uses kg CO2e; energy uses kWh.
 
-This code was drafted with Claude Code (Anthropic). It was verified by:
-- unit tests against hand-worked formulas;
-- an independent validator that re-checks every plan;
-- cross-checking CP-SAT against PuLP/CBC;
-- the 28-case evaluation;
-- reading every module.
+The calculation conventions are:
 
-During evaluation the AI-drafted code had three defects, all fixed:
-- an objective scaling bug that dropped orders;
-- re-plan deltas that counted dropped orders as savings;
-- a weight normalisation that let carbon dominate.
+```text
+energy_cost_per_unit = energy_kwh_per_unit × energy_price_per_kwh
+subtotal_per_unit = unit_cost + energy_cost_per_unit + transport_cost_per_unit
+landed_cost = qty × subtotal_per_unit × (1 + duty_pct)
+carbon_kg = qty × (energy_kwh_per_unit × week's carbon_kg_per_kwh + carbon_kg_per_unit)
+```
 
-**Team: complete before submission.** Add the contribution statement (who built which part) and each member's signed declaration of original work.
+`plants.csv` includes three optional fields allowed by Annex B: `energy_price_per_kwh`, `carbon_kg_per_kwh_week_2`, and `carbon_kg_per_kwh_week_3`. Use the weekly override for weeks 2/3 and the base carbon factor otherwise. The guide's fixed minimum schema omits energy price and a weekly-carbon representation, so these extra fields make those cases explicit. All other CSVs use only required columns.
+
+## Validation and tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+The tests cover default and custom sizes, reproducibility, required challenge cases, corrupted inputs, missing routes, optional columns, data cards, and planning-date inference. An independent scheduling test constructs an on-time baseline for the default seed; it does not claim minimum cost or feasibility for every custom dataset.
+
+Validation checks required columns, nonempty required values, unique keys, integer quantities, positive and consistent capacities, finite nonnegative numeric values, eligibility, route coverage, dates, event plants/loss fractions, and data-card row counts. Errors include the file and row where possible. A failed validation exits with code 1.
+
+To validate another Annex B pack without our data card:
+
+```bash
+python3 scripts/validate_data.py --data-dir /path/to/csv_folder --start-date 2026-10-12
+```
+
+The four files are required; `capacity_events.csv` may contain only its header before the late data drop. Optional energy/carbon columns are accepted, but aren't required for basic schema validation. Our synthetic challenge audit runs only for packs carrying our generator metadata. The validator reads files and reports results; it is not the application's database loader or allocation validator.
+
+This is procedural synthetic data with no real company or personal records. Codex assisted the review/refactor and documentation; validation and automated tests check the resulting code. Each generated pack includes its own JSON data card, so no separate Markdown data card is needed.

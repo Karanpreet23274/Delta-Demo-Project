@@ -1,13 +1,7 @@
-# Synthetic datasets are generated locally. Track the generators, the small sample pack and the data card, not bulk data.
-data/*
-!data/generate.py
-!data/sample/
-!data/DATA_CARD.md
+# Synthetic datasets are generated locally. Track the generator, not bulk data.
+# All generated synthetic CSVs; keep generator, code and data cards in Git.
+data/
 __pycache__/
-*.pyc
 .pytest_cache/
-.ruff_cache/
 .venv/
 .env
-*.db
-*.db-*
