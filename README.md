@@ -1,5 +1,8 @@
 # Multi-Plant dataset generator
 
+> **Standalone allocator now available:** see [ALLOCATOR_README.md](ALLOCATOR_README.md)
+> for the PuLP solver, CLI, scenarios, independent validator, and JSON handoff.
+
 Generate synthetic practice data for **Multi-Plant Order Allocation with Cost and Carbon**. Python 3.11+ is enough; no package installation, API key, or internet connection is needed.
 
 The generator was checked against Sections 4.3–4.5 and Annexes B/D of the supplied participant guide. The design review supplies context; its suggested application architecture is outside this generator's scope.
